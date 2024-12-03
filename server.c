@@ -22,7 +22,7 @@ int initial_x = 0, initial_y = 0; // Posição inicial do jogador (entrada)
 int labyrinth_rows = 0;
 int labyrinth_cols = 0;
 
-// Função para carregar o labirinto do arquiv
+// Função para carregar o labirinto do arquivo
 void load_labyrinth(const char *filename) {
     printf("Tentando abrir o arquivo: %s\n", filename);  // Log para debug
 
@@ -128,6 +128,7 @@ void find_path_to_exit(int *moves) {
 void handle_client(int client_socket) {
     action_t action;
     memset(&action, 0, sizeof(action));
+    int game_started = 0;  // Flag para verificar se o jogo foi iniciado
 
     while (1) {
         recv(client_socket, &action, sizeof(action), 0);
@@ -141,20 +142,41 @@ void handle_client(int client_socket) {
                 calculate_possible_moves(action.moves);
                 send_visible_labyrinth(&action);
                 send(client_socket, &action, sizeof(action), 0);
+                game_started = 1;  // O jogo foi iniciado
                 break;
 
             case 1: // Move
+                if (!game_started) {
+                    // Se o jogo não foi iniciado, retornar um erro
+                    printf("Erro: start the game first\n");
+                    action.type = 4; // Tipo update
+                    memset(action.moves, 0, sizeof(action.moves)); // Limpar movimentos
+                    send(client_socket, &action, sizeof(action), 0);  // Enviar a resposta de erro
+                    break;  // Termina a execução deste comando e retorna ao loop principal
+                }
+
+                // Verificar se o movimento é válido
                 if (action.moves[0] == 1 && player_x > 0 && labyrinth[player_x - 1][player_y] != 0) {
-                    player_x--;
+                    player_x--;  // Cima
                 } else if (action.moves[0] == 2 && player_y < labyrinth_cols - 1 && labyrinth[player_x][player_y + 1] != 0) {
-                    player_y++;
+                    player_y++;  // Direita
                 } else if (action.moves[0] == 3 && player_x < labyrinth_rows - 1 && labyrinth[player_x + 1][player_y] != 0) {
-                    player_x++;
+                    player_x++;  // Baixo
                 } else if (action.moves[0] == 4 && player_y > 0 && labyrinth[player_x][player_y - 1] != 0) {
-                    player_y--;
+                    player_y--;  // Esquerda
                 } else {
+                    // Movimento inválido
                     printf("Movimento inválido.\n");
-                    continue;
+
+                    // Enviar uma resposta de erro para o cliente
+                    action.type = 4; // Tipo update (erro)
+                    memset(action.moves, 0, sizeof(action.moves)); // Limpar movimentos
+                    send(client_socket, &action, sizeof(action), 0);  // Enviar a resposta de erro
+
+                    // Reexibir a lista de movimentos possíveis para o cliente tentar novamente
+                    calculate_possible_moves(action.moves);
+                    send_visible_labyrinth(&action);
+                    break;  // Termina a execução do comando e volta ao loop de espera por novos comandos
                 }
 
                 // Checar se o jogador chegou à saída
@@ -163,8 +185,8 @@ void handle_client(int client_socket) {
                     memcpy(action.board, labyrinth, sizeof(labyrinth));
                     send(client_socket, &action, sizeof(action), 0);
                     printf("Cliente venceu o jogo!\n");
-                    close(client_socket);
-                    return;
+                    // Não finaliza a conexão aqui, mas permite que o cliente escolha entre reset ou exit
+                    break; // Permite que o cliente escolha entre reset ou exit
                 }
 
                 // Atualizar os movimentos possíveis e enviar de volta
@@ -176,23 +198,24 @@ void handle_client(int client_socket) {
 
             case 2: // Map request
                 printf("Cliente requisitou o mapa.\n");
+                if (!game_started) {
+                    printf("Erro: start the game first\n");
+                    action.type = 4; // Tipo update
+                    memset(action.moves, 0, sizeof(action.moves)); // Limpar movimentos
+                    send(client_socket, &action, sizeof(action), 0);  // Enviar a resposta de erro
+                    break;
+                }
                 action.type = 4; // Update com o estado do labirinto conhecido
                 send_visible_labyrinth(&action);
                 send(client_socket, &action, sizeof(action), 0);
                 break;
 
-            case 3: // Hint request
-                printf("Cliente requisitou uma dica.\n");
-                action.type = 4; // Update
-                find_path_to_exit(action.moves);
-                send(client_socket, &action, sizeof(action), 0);
-                break;
-
             case 6: // Reset
                 printf("Resetando o jogo.\n");
+                // Resetando as variáveis do jogo
                 action.type = 4; // Update com estado inicial
-                player_x = initial_x;
-                player_y = initial_y;
+                player_x = initial_x;  // Reiniciar na posição inicial
+                player_y = initial_y;  // Reiniciar na posição inicial
                 calculate_possible_moves(action.moves);
                 send_visible_labyrinth(&action);
                 send(client_socket, &action, sizeof(action), 0);
@@ -204,10 +227,15 @@ void handle_client(int client_socket) {
                 return;
 
             default:
+                // Comando não suportado
                 printf("Ação não suportada: %d\n", action.type);
+                action.type = 4; // Tipo update
+                memset(action.moves, 0, sizeof(action.moves)); // Limpar movimentos
+                send(client_socket, &action, sizeof(action), 0);  // Enviar a resposta de erro
         }
     }
 }
+
 
 int main(int argc, char *argv[]) {
     if (argc < 5) {
